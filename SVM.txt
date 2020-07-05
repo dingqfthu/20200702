@@ -1,0 +1,91 @@
+# 导入需要的函数包
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.linalg.{Vectors,Vector}
+import org.apache.spark.mllib.classification.{SVMModel, SVMWithSGD}
+import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+
+#读取数据
+​ 首先，读取文本文件；
+然后，通过map将每行的数据用“,”隔开，在我们的数据集中，每行被分成了5部分，前4部分是鸢尾花的4个特征，最后一部分是鸢尾花的分类。
+这里我们用LabeledPoint来存储标签列和特征列。
+LabeledPoint在监督学习中常用来存储标签和特征，其中要求标签的类型是double，特征的类型是Vector。
+所以，我们把莺尾花的分类进行了一下改变，”Iris-setosa”对应分类0，”Iris-versicolor”对应分类1，其余对应分类2；
+然后获取莺尾花的4个特征，存储在Vector中。
+// 导入数据
+val data = sc.textFile("iris.data")
+// 数据预处理
+val parsedData = data.map { line =>
+val parts = line.split(',')
+LabeledPoint(
+if(parts(4)=="Iris-setosa") 0.toDouble 
+else if (parts(4)=="Iris-versicolor") 
+1.toDouble 
+else
+2.toDouble, 
+Vectors.dense(parts(0).toDouble,parts(1).toDouble,parts
+(2).toDouble,parts(3).toDouble))
+}
+
+#构建模型
+因为SVM只支持2分类，所以我们要进行一下数据抽取，这里我们通过filter过滤掉第2类的数据，只选取第0类和第1类的数据。
+然后，我们把数据集划分成两部分，其中训练集占60%，测试集占40%：
+#数据集拆分
+val splits = parsedData.filter { point => point.label != 2 }.randomSplit(Array(0.6, 0.4), seed = 11L)
+val training = splits(0).cache()
+val test = splits(1)
+#构建SVM模型
+接下来，通过训练集构建模型SVMWithSGD。
+这里的SGD即著名的随机梯度下降算法（Stochastic Gradient Descent）。
+设置迭代次数为1000，除此之外还有stepSize（迭代步伐大小），
+regParam（regularization正则化控制参数），miniBatchFraction（每次迭代参与计算的样本比例），
+initialWeights（weight向量初始值）等参数可以进行设置。
+val numIterations = 1000
+val model = SVMWithSGD.train(training, numIterations)
+
+#模型预测
+首先我们清除默认阈值，这样会输出原始的预测评分，即带有确信度的结果。
+model.clearThreshold()
+
+val scoreAndLabels = test.map { point =>
+val score = model.predict(point.features)
+(score, point.label)
+}
+scoreAndLabels.foreach(println)
+
+那如果设置了阈值，则会把大于阈值的结果当成正预测，小于阈值的结果当成负预测。
+model.setThreshold(0.0)
+scoreAndLabels.foreach(println)
+
+#模型评估
+构建评估矩阵，把模型预测的准确性打印出来：
+val metrics = new BinaryClassificationMetrics(scoreAndLabels)
+val auROC = metrics.areaUnderROC()
+println("Area under ROC = " + auROC)
+
+#模型优化
+​ 其中， SVMWithSGD.train() 方法默认的通过把正则化参数设为1来执行来范数。
+如果我们想配置这个算法，可以通过创建一个新的 SVMWithSGD对象然后调用他的setter方法来进行重新配置。
+下面这个例子，我们构建了一个正则化参数为0.1的L1正则化SVM方法 ，然后迭代这个训练算法2000次。
+import org.apache.spark.mllib.optimization.L1Updater
+val svmAlg = new SVMWithSGD()
+svmAlg.optimizer.
+setNumIterations(2000).
+setRegParam(0.1).
+setUpdater(new L1Updater)
+val modelL1 = svmAlg.run(training)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
